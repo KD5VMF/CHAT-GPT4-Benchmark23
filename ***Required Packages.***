@@ -1,1 +1,33 @@
-Data coming soon...
+To run this program, you will need the following Python packages:
+
+1. **OpenCV (cv2)**: This is a popular computer vision library. It's used in this program for interfacing with the webcam, capturing image frames, and saving them to files. It's also used to overlay text onto the images. You can install it with the following command:
+   
+    ```bash
+    pip install opencv-python
+    ```
+    Note: If you're running this script on a headless server (i.e., without a graphical user interface), you should install `opencv-python-headless` instead.
+
+2. **NumPy**: This is a powerful library for numerical processing in Python. While it's not directly used in the code you've shown, it's a dependency of OpenCV, so it will be installed when you install OpenCV. If you need to install it separately, you can do so with the following command:
+   
+    ```bash
+    pip install numpy
+    ```
+
+3. **os (Operating System)**: This is a built-in Python module, so you don't need to install it separately. It's used in this program for interacting with the operating system, such as creating directories and constructing file paths.
+
+4. **time**: This is another built-in Python module that's used for various time-related tasks. In this program, it's used to make the program wait for a specified time between capturing images.
+
+5. **datetime**: This built-in Python module is used to generate timestamps for the images. 
+
+Make sure that Python (preferably Python 3) is installed on your system. You can install the required external packages (OpenCV and NumPy) using pip, which is a package manager for Python. 
+
+If you're running this program on multiple machines, you might want to create a `requirements.txt` file with the package names and versions. Then, you can install all required packages with one command (`pip install -r requirements.txt`). This ensures that the program runs in a consistent environment on all machines. 
+
+In this case, the `requirements.txt` file would look something like this:
+
+```
+opencv-python==4.5.4.58
+numpy==1.21.2
+```
+
+Note that the version numbers here are just examples; you would replace them with the versions you're using.
