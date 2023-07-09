@@ -22,7 +22,7 @@ Here's an example of how to install the necessary packages with pip, Python's pa
 
 ```bash
 python -m pip install --upgrade pip
-pip install torch numpy
+pip install numpy==1.19.2
 ```
 
 The `--upgrade pip` command is used to make sure you have the latest version of pip.
