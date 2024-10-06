@@ -48,6 +48,17 @@ def main():
 
     print("Matrix Multiplication Performance Test")
 
+    # Step 1: Ask user what to use for benchmarking
+    print("\nSelect computation method:")
+    print("1. CPU only")
+    print("2. GPU using CUDA (default precision)")
+    print("3. GPU using Tensor Cores (half precision)")
+    print("4. GPU (CUDA) and Tensor Cores")
+    print("5. All (CPU, CUDA, Tensor Cores)")
+
+    benchmark_type = int(input("\nEnter your choice (1/2/3/4/5): "))
+
+    # Step 2: Select matrix size
     max_power = 17
     print("\nSelect a matrix size (power of 2):")
     for i in range(6, max_power + 1):
@@ -58,43 +69,66 @@ def main():
     user_size = 2 ** (user_choice + 5)
     matrix_sizes = [2 ** i for i in range(6, user_size.bit_length() + 1)]
 
-    cpu_device = torch.device("cpu")
-    print(f"\nRunning tests on CPU: {torch.get_num_threads()} threads")
-    cpu_results = test_device(cpu_device, matrix_sizes)
+    # Step 3: Run tests based on the user's choice
+    cpu_results = None
+    gpu_results = None
+    gpu_tc_results = None
 
-    if torch.cuda.is_available():
+    if benchmark_type == 1 or benchmark_type == 5:
+        # Run CPU test
+        cpu_device = torch.device("cpu")
+        print(f"\nRunning tests on CPU: {torch.get_num_threads()} threads")
+        cpu_results = test_device(cpu_device, matrix_sizes)
+
+    if benchmark_type in [2, 3, 4, 5] and torch.cuda.is_available():
         gpu_device = torch.device("cuda")
-        print(f"Running tests on GPU using CUDA: {torch.cuda.get_device_name(gpu_device)}")
-        gpu_results = test_device(gpu_device, matrix_sizes)
 
-        if gpu_device.type == "cuda":
+        if benchmark_type in [2, 4, 5]:
+            # Run GPU (CUDA) test
+            print(f"\nRunning tests on GPU using CUDA: {torch.cuda.get_device_name(gpu_device)}")
+            gpu_results = test_device(gpu_device, matrix_sizes)
+
+        if benchmark_type in [3, 4, 5]:
+            # Run GPU (Tensor Cores) test
             print(f"Running tests on GPU using Tensor Cores: {torch.cuda.get_device_name(gpu_device)}")
             gpu_tc_results = test_device(gpu_device, matrix_sizes, use_tensor_cores=True)
-        else:
-            print("GPU does not support Tensor Cores")
-            gpu_tc_results = None
-    else:
-        print("CUDA is not available, GPU test skipped")
-        gpu_results = None
-        gpu_tc_results = None
 
+    elif benchmark_type in [2, 3, 4, 5]:
+        print("\nCUDA is not available, GPU test skipped")
+
+    # Step 4: Display results
     print("\nMatrix multiplication test results:")
-    print(f"{'Size':<8}{'CPU Time':<24}{'GPU Time (CUDA)':<24}{'GPU Time (Tensor Cores)':<24}{'Faster Device'}")
+    header = f"{'Size':<8}{'CPU Time':<24}{'GPU Time (CUDA)':<24}{'GPU Time (Tensor Cores)':<24}{'Faster Device'}"
+    print(header)
 
     for i, size in enumerate(matrix_sizes):
-        cpu_duration = format_duration(cpu_results[i][1])
+        cpu_duration = format_duration(cpu_results[i][1]) if cpu_results else "N/A"
         gpu_duration = format_duration(gpu_results[i][1]) if gpu_results else "N/A"
         gpu_tc_duration = format_duration(gpu_tc_results[i][1]) if gpu_tc_results else "N/A"
-        if gpu_results and gpu_tc_results:
-            durations = [cpu_results[i][1], gpu_results[i][1], gpu_tc_results[i][1]]
-            faster_device = ["CPU", "GPU (CUDA)", "GPU (Tensor Cores)"][np.argmin(durations)]
-            time_difference = format_duration(abs(min(durations) - max(durations)))
-        elif gpu_results:
-            faster_device = "CPU" if cpu_results[i][1] < gpu_results[i][1] else "GPU (CUDA)"
-            time_difference = format_duration(abs(cpu_results[i][1] - gpu_results[i][1]))
+
+        durations = []
+        device_labels = []
+
+        if cpu_results:
+            durations.append(cpu_results[i][1])
+            device_labels.append("CPU")
+        if gpu_results:
+            durations.append(gpu_results[i][1])
+            device_labels.append("GPU (CUDA)")
+        if gpu_tc_results:
+            durations.append(gpu_tc_results[i][1])
+            device_labels.append("GPU (Tensor Cores)")
+
+        if len(durations) > 1:
+            # Determine the fastest device
+            min_index = np.argmin(durations)
+            faster_device = device_labels[min_index]
+            time_difference = format_duration(abs(durations[min_index] - max(durations)))
         else:
-            faster_device = "N/A"
+            # Only one type of result available
+            faster_device = device_labels[0] if device_labels else "N/A"
             time_difference = "N/A"
+
         print(f"{size:<8}{cpu_duration:<24}{gpu_duration:<24}{gpu_tc_duration:<24}{faster_device} by {time_difference}")
 
     print("\nThank you for running the Matrix Multiplication Performance Test!")
@@ -103,5 +137,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
