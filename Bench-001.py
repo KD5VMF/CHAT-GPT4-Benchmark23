@@ -1,3 +1,5 @@
+# This will allow multiple GPU test/compare.
+
 import torch
 import time
 import os
