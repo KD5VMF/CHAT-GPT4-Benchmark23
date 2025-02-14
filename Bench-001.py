@@ -1,5 +1,3 @@
-# This will allow multiple GPU test/compare.
-
 import torch
 import time
 import os
@@ -16,56 +14,61 @@ def clear_screen():
 def format_duration(duration):
     return f"{duration * 1000:.6f} ms"
 
+def has_tensor_cores(device_index):
+    """
+    Checks if the GPU at the given device_index supports Tensor Cores.
+    NVIDIA GPUs starting with compute capability 7.0 (Volta and later) have Tensor Cores.
+    """
+    cap = torch.cuda.get_device_capability(device_index)
+    return cap[0] >= 7
+
 def test_device(device, matrix_sizes, use_tensor_cores=False):
-    """Run the matrix multiplication test on the given device.
-    
-    For each matrix size, a random square matrix is created and multiplied 50 times.
+    """
+    For each matrix size in matrix_sizes, create two random square matrices on the given device,
+    perform 5 warm-up multiplications, then 50 timed multiplications.
+    For CUDA devices, synchronize before starting and after finishing timing.
     Returns a list of tuples: (matrix_size, total_duration).
     """
     results = []
     for size in matrix_sizes:
-        # Create two random matrices on the given device.
         mat_a = torch.randn(size, size, device=device, dtype=torch.float64)
         mat_b = torch.randn(size, size, device=device, dtype=torch.float64)
         if use_tensor_cores:
-            # Convert to half precision for Tensor Core usage.
+            # Convert to half precision for potential Tensor Core usage.
             mat_a = mat_a.to(torch.float16)
             mat_b = mat_b.to(torch.float16)
         # Warm-up runs
         for _ in range(5):
             torch.matmul(mat_a, mat_b)
-        # Timed runs
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
         start_time = time.perf_counter()
         for _ in range(50):
             torch.matmul(mat_a, mat_b)
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
         end_time = time.perf_counter()
-        duration = end_time - start_time
-        results.append((size, duration))
+        results.append((size, end_time - start_time))
     return results
 
 def main():
     clear_screen()
     print("Matrix Multiplication Performance Test")
     print("----------------------------------------")
-
-    # Step 1: Ask user which computation method(s) to run.
-    print("\nSelect computation method:")
-    print("1. CPU only")
-    print("2. GPU using CUDA (default precision, single GPU)")
-    print("3. GPU using Tensor Cores (half precision, single GPU)")
-    print("4. GPU (CUDA) and Tensor Cores (single GPU)")
-    print("5. All (CPU, GPU (CUDA), GPU (Tensor Cores))")
-    print("6. Multi-GPU test (specify comma-separated GPU indices)")
+    
+    # --- Main Menu ---
+    print("\nMain Menu:")
+    print("1. CPU Only")
+    print("2. Single GPU Test")
+    print("3. Multi-GPU Test")
     try:
-        benchmark_type = int(input("\nEnter your choice (1-6): "))
+        main_choice = int(input("\nEnter your choice (1-3): "))
     except ValueError:
-        print("Invalid input. Defaulting to CPU only.")
-        benchmark_type = 1
+        main_choice = 1
 
-    # Step 2: Select matrix sizes.
-    max_power = 17  # maximum power of 2 to consider.
+    # --- Matrix Size Selection ---
+    max_power = 17  # Up to 2^17
     print("\nSelect a matrix size (power of 2):")
-    # Show options from 2^6 up to 2^(max_power)
     for i in range(6, max_power + 1):
         print(f"{i - 5}. {2 ** i}")
     try:
@@ -74,132 +77,251 @@ def main():
         user_choice = 6  # default
     user_choice = min(user_choice, max_power - 5)
     user_size = 2 ** (user_choice + 5)
-    # Build a list of matrix sizes from 2^6 up to the selected size.
     matrix_sizes = [2 ** i for i in range(6, user_size.bit_length() + 1)]
-
-    # Step 3: Run tests based on the selected benchmark type.
-    cpu_results = None
-    gpu_results = None
-    gpu_tc_results = None
-    multi_gpu_results = None  # For Option 6
-
-    # Option 1 (or part of Option 5): CPU test.
-    if benchmark_type in [1, 5]:
+    
+    # --- Option 1: CPU Only Test ---
+    if main_choice == 1:
         cpu_device = torch.device("cpu")
-        print(f"\nRunning tests on CPU ({torch.get_num_threads()} threads)...")
+        print(f"\nRunning CPU test using {torch.get_num_threads()} threads...")
         cpu_results = test_device(cpu_device, matrix_sizes)
-
-    # Options 2, 3, 4, or 5: Single GPU tests.
-    if benchmark_type in [2, 3, 4, 5]:
-        if torch.cuda.is_available():
-            num_gpus = torch.cuda.device_count()
-            # If more than one GPU, let user select one.
-            if num_gpus > 1:
-                print("\nMultiple GPUs detected:")
-                for i in range(num_gpus):
-                    print(f"  {i}: {torch.cuda.get_device_name(i)}")
-                gpu_choice = input("Enter the GPU index to use (default 0): ").strip()
-                try:
-                    device_index = int(gpu_choice) if gpu_choice != "" else 0
-                    if device_index < 0 or device_index >= num_gpus:
-                        print("Invalid GPU index. Defaulting to GPU 0.")
-                        device_index = 0
-                except ValueError:
-                    print("Invalid input. Defaulting to GPU 0.")
-                    device_index = 0
-            else:
-                device_index = 0
-            gpu_device = torch.device(f"cuda:{device_index}")
-            if benchmark_type in [2, 4, 5]:
-                print(f"\nRunning tests on GPU using CUDA (Device {device_index}: {torch.cuda.get_device_name(gpu_device)})...")
-                gpu_results = test_device(gpu_device, matrix_sizes)
-            if benchmark_type in [3, 4, 5]:
-                print(f"\nRunning tests on GPU using Tensor Cores (Device {device_index}: {torch.cuda.get_device_name(gpu_device)})...")
-                gpu_tc_results = test_device(gpu_device, matrix_sizes, use_tensor_cores=True)
-        else:
-            print("\nCUDA is not available; GPU tests will be skipped.")
-
-    # Option 6: Multi-GPU test.
-    if benchmark_type == 6:
-        if torch.cuda.is_available():
-            num_gpus = torch.cuda.device_count()
-            print("\nAvailable GPUs:")
+        print("\nCPU Test Results:")
+        print(f"{'Size':<10}{'Time':<28}")
+        for size, duration in cpu_results:
+            print(f"{size:<10}{format_duration(duration):<28}")
+    
+    # --- Option 2: Single GPU Test ---
+    elif main_choice == 2:
+        if not torch.cuda.is_available():
+            print("\nCUDA is not available.")
+            return
+        num_gpus = torch.cuda.device_count()
+        # --- GPU Test Type Menu for Single GPU ---
+        print("\nSelect GPU Test Type for Single GPU:")
+        print("1. CUDA (default precision)")
+        print("2. Tensor Cores (half precision)")
+        print("3. Both")
+        try:
+            gpu_test_type = int(input("\nEnter your choice (1-3): "))
+        except ValueError:
+            gpu_test_type = 1
+        # If more than one GPU is available, ask for which one to use.
+        if num_gpus > 1:
+            print("\nMultiple GPUs detected:")
             for i in range(num_gpus):
                 print(f"  {i}: {torch.cuda.get_device_name(i)}")
-            gpu_indices_input = input("Enter the GPU indices to use (comma-separated, e.g. 0,1,2): ").strip()
             try:
-                gpu_indices = [int(x.strip()) for x in gpu_indices_input.split(',') if x.strip().isdigit()]
-                gpu_indices = [i for i in gpu_indices if 0 <= i < num_gpus]
-                if not gpu_indices:
-                    print("No valid GPU indices selected. Defaulting to GPU 0.")
-                    gpu_indices = [0]
-            except Exception:
-                print("Invalid input. Defaulting to GPU 0.")
-                gpu_indices = [0]
-            multi_gpu_results = {}
-            for gpu_idx in gpu_indices:
-                device = torch.device(f"cuda:{gpu_idx}")
-                print(f"\nRunning tests on GPU {gpu_idx} using CUDA (Device {gpu_idx}: {torch.cuda.get_device_name(device)})...")
-                multi_gpu_results[gpu_idx] = test_device(device, matrix_sizes)
+                gpu_index = int(input("Enter GPU index to use (default 0): ") or "0")
+            except ValueError:
+                gpu_index = 0
         else:
-            print("\nCUDA is not available; multi-GPU test skipped.")
-
-    # Step 4: Display results.
-    if benchmark_type == 6 and multi_gpu_results is not None:
-        print("\nMatrix Multiplication Test Results (Multi-GPU):")
-        # Build header with one column per GPU.
-        header = "Size".ljust(10)
-        selected_gpus = sorted(multi_gpu_results.keys())
-        for gpu_idx in selected_gpus:
-            header += f"GPU {gpu_idx} Time".ljust(28)
-        header += "Ranking (Fastest -> Slowest)"
-        print(header)
-        for i, size in enumerate(matrix_sizes):
-            line = f"{size:<10}"
-            durations = []
-            for gpu_idx in selected_gpus:
-                duration = multi_gpu_results[gpu_idx][i][1]
-                durations.append((gpu_idx, duration))
-                line += f"{format_duration(duration):<28}"
-            # Sort GPUs by their duration (fastest first)
-            sorted_durations = sorted(durations, key=lambda x: x[1])
-            ranking_str = " -> ".join([f"GPU {gpu}" for gpu, _ in sorted_durations])
-            # Compute time difference between fastest and slowest.
-            time_diff = format_duration(sorted_durations[-1][1] - sorted_durations[0][1])
-            ranking_str += f" (Diff: {time_diff})"
-            line += ranking_str
-            print(line)
-    else:
-        # Display results for options 1,2,3,4,5 in a common table.
-        print("\nMatrix Multiplication Test Results:")
-        header = f"{'Size':<10}{'CPU Time':<28}{'GPU Time (CUDA)':<28}{'GPU Time (Tensor Cores)':<28}{'Fastest Device'}"
-        print(header)
-        for i, size in enumerate(matrix_sizes):
-            cpu_duration = format_duration(cpu_results[i][1]) if cpu_results else "N/A"
-            gpu_duration = format_duration(gpu_results[i][1]) if gpu_results else "N/A"
-            gpu_tc_duration = format_duration(gpu_tc_results[i][1]) if gpu_tc_results else "N/A"
-            durations = []
-            labels = []
-            if cpu_results:
-                durations.append(cpu_results[i][1])
-                labels.append("CPU")
-            if gpu_results:
-                durations.append(gpu_results[i][1])
-                labels.append("GPU (CUDA)")
-            if gpu_tc_results:
-                durations.append(gpu_tc_results[i][1])
-                labels.append("GPU (Tensor Cores)")
-            if len(durations) > 0:
-                min_index = np.argmin(durations)
-                fastest = labels[min_index]
-                diff = format_duration(abs(durations[min_index] - max(durations)))
+            gpu_index = 0
+        gpu_device = torch.device(f"cuda:{gpu_index}")
+        gpu_name = torch.cuda.get_device_name(gpu_index)
+        
+        if gpu_test_type == 1:
+            print(f"\nRunning Single GPU Test (CUDA) on GPU {gpu_index}: {gpu_name}")
+            gpu_results = test_device(gpu_device, matrix_sizes)
+            print("\nSingle GPU Test Results (CUDA):")
+            print(f"{'Size':<10}{'Time':<28}")
+            for size, duration in gpu_results:
+                print(f"{size:<10}{format_duration(duration):<28}")
+        elif gpu_test_type == 2:
+            if not has_tensor_cores(gpu_index):
+                print(f"\nNo Tensor Cores found on GPU {gpu_index}: {gpu_name}.")
+                return
+            print(f"\nRunning Single GPU Test (Tensor Cores) on GPU {gpu_index}: {gpu_name}")
+            gpu_tc_results = test_device(gpu_device, matrix_sizes, use_tensor_cores=True)
+            print("\nSingle GPU Test Results (Tensor Cores):")
+            print(f"{'Size':<10}{'Time':<28}")
+            for size, duration in gpu_tc_results:
+                print(f"{size:<10}{format_duration(duration):<28}")
+        elif gpu_test_type == 3:
+            print(f"\nRunning Single GPU Test (Both) on GPU {gpu_index}: {gpu_name}")
+            # Run CUDA test unconditionally.
+            gpu_results = test_device(gpu_device, matrix_sizes)
+            # Check for tensor core support before running Tensor Cores test.
+            if has_tensor_cores(gpu_index):
+                gpu_tc_results = test_device(gpu_device, matrix_sizes, use_tensor_cores=True)
             else:
-                fastest = "N/A"
-                diff = "N/A"
-            print(f"{size:<10}{cpu_duration:<28}{gpu_duration:<28}{gpu_tc_duration:<28}{fastest} by {diff}")
-
+                print(f"\nNo Tensor Cores found on GPU {gpu_index}: {gpu_name}. Skipping Tensor Cores test.")
+                gpu_tc_results = None
+            print("\nSingle GPU Test Results (Comparison):")
+            print(f"{'Size':<10}{'CUDA Time':<28}{'Tensor Cores Time':<28}{'Faster'}")
+            for i, size in enumerate(matrix_sizes):
+                cuda_time = gpu_results[i][1]
+                if gpu_tc_results:
+                    tensor_time = gpu_tc_results[i][1]
+                    faster = "CUDA" if cuda_time < tensor_time else "Tensor Cores"
+                    diff = format_duration(abs(cuda_time - tensor_time))
+                    tensor_str = format_duration(tensor_time)
+                else:
+                    faster = "CUDA (only)"
+                    diff = "N/A"
+                    tensor_str = "N/A"
+                print(f"{size:<10}{format_duration(cuda_time):<28}{tensor_str:<28}{faster} by {diff}")
+    
+    # --- Option 3: Multi-GPU Test ---
+    elif main_choice == 3:
+        if not torch.cuda.is_available():
+            print("\nCUDA is not available.")
+            return
+        num_gpus = torch.cuda.device_count()
+        # --- Multi-GPU Test Mode Menu ---
+        print("\nSelect Multi-GPU Test Type:")
+        print("1. CUDA (default precision)")
+        print("2. Tensor Cores (half precision)")
+        print("3. Both")
+        try:
+            multi_test_type = int(input("\nEnter your choice (1-3): "))
+        except ValueError:
+            multi_test_type = 1
+        # Display available GPUs.
+        print("\nAvailable GPUs:")
+        for i in range(num_gpus):
+            print(f"  {i}: {torch.cuda.get_device_name(i)}")
+        gpu_indices_input = input("Enter the GPU indices to use (comma-separated, e.g. 0,1,2): ").strip()
+        try:
+            gpu_indices = [int(x.strip()) for x in gpu_indices_input.split(',') if x.strip().isdigit()]
+            gpu_indices = [i for i in gpu_indices if 0 <= i < num_gpus]
+            if not gpu_indices:
+                print("No valid GPU indices selected. Defaulting to GPU 0.")
+                gpu_indices = [0]
+        except Exception:
+            print("Invalid input. Defaulting to GPU 0.")
+            gpu_indices = [0]
+        # Create a dictionary mapping each GPU index to its name.
+        gpu_names = {idx: torch.cuda.get_device_name(idx) for idx in gpu_indices}
+        
+        # Multi-GPU Test for CUDA or Tensor Cores only.
+        if multi_test_type in [1, 2]:
+            mode_str = "CUDA" if multi_test_type == 1 else "Tensor Cores"
+            print(f"\nRunning Multi-GPU Test ({mode_str}) on GPUs: {', '.join(str(i) for i in gpu_indices)}")
+            multi_results = {}
+            for idx in gpu_indices:
+                device = torch.device(f"cuda:{idx}")
+                if multi_test_type == 1:
+                    multi_results[idx] = test_device(device, matrix_sizes)
+                else:
+                    if has_tensor_cores(idx):
+                        multi_results[idx] = test_device(device, matrix_sizes, use_tensor_cores=True)
+                    else:
+                        print(f"\nNo Tensor Cores found on GPU {idx}: {gpu_names[idx]}. Skipping this GPU for Tensor Cores test.")
+                        multi_results[idx] = None
+            # Display results table.
+            print(f"\nMulti-GPU Test Results ({mode_str}):")
+            header = "Size".ljust(10)
+            for idx in gpu_indices:
+                header += f"GPU {idx} Time".ljust(28)
+            header += "Winner".ljust(40) + "Diff (Fastest vs 2nd)".ljust(28)
+            print(header)
+            for i, size in enumerate(matrix_sizes):
+                line = f"{size:<10}"
+                durations = []
+                for idx in gpu_indices:
+                    result = multi_results[idx]
+                    if result is not None:
+                        duration = result[i][1]
+                        durations.append((idx, duration))
+                        line += f"{format_duration(duration):<28}"
+                    else:
+                        line += "No Tensor Cores".ljust(28)
+                if len(durations) > 1:
+                    sorted_durations = sorted(durations, key=lambda x: x[1])
+                    winner_idx, winner_time = sorted_durations[0]
+                    runner_up_idx, runner_up_time = sorted_durations[1]
+                    diff = runner_up_time - winner_time
+                    winner_str = f"{gpu_names[winner_idx]} (GPU {winner_idx})"
+                    diff_str = format_duration(diff)
+                elif durations:
+                    winner_idx, _ = durations[0]
+                    winner_str = f"{gpu_names[winner_idx]} (GPU {winner_idx})"
+                    diff_str = "N/A"
+                else:
+                    winner_str = "N/A"
+                    diff_str = "N/A"
+                line += winner_str.ljust(40) + diff_str.ljust(28)
+                print(line)
+        
+        # Multi-GPU Test for Both CUDA and Tensor Cores.
+        elif multi_test_type == 3:
+            print(f"\nRunning Multi-GPU Test (Both CUDA and Tensor Cores) on GPUs: {', '.join(str(i) for i in gpu_indices)}")
+            multi_results_cuda = {}
+            multi_results_tensor = {}
+            for idx in gpu_indices:
+                device = torch.device(f"cuda:{idx}")
+                multi_results_cuda[idx] = test_device(device, matrix_sizes)
+                if has_tensor_cores(idx):
+                    multi_results_tensor[idx] = test_device(device, matrix_sizes, use_tensor_cores=True)
+                else:
+                    print(f"\nNo Tensor Cores found on GPU {idx}: {gpu_names[idx]}. Skipping Tensor Cores test for this GPU.")
+                    multi_results_tensor[idx] = None
+            # Display CUDA results.
+            print("\nMulti-GPU Test Results (CUDA):")
+            header = "Size".ljust(10)
+            for idx in gpu_indices:
+                header += f"GPU {idx} Time".ljust(28)
+            header += "Winner".ljust(40) + "Diff (Fastest vs 2nd)".ljust(28)
+            print(header)
+            for i, size in enumerate(matrix_sizes):
+                line = f"{size:<10}"
+                durations = []
+                for idx in gpu_indices:
+                    duration = multi_results_cuda[idx][i][1]
+                    durations.append((idx, duration))
+                    line += f"{format_duration(duration):<28}"
+                if len(durations) > 1:
+                    sorted_durations = sorted(durations, key=lambda x: x[1])
+                    winner_idx, winner_time = sorted_durations[0]
+                    runner_up_idx, runner_up_time = sorted_durations[1]
+                    diff = runner_up_time - winner_time
+                    winner_str = f"{gpu_names[winner_idx]} (GPU {winner_idx})"
+                    diff_str = format_duration(diff)
+                elif durations:
+                    winner_idx, _ = durations[0]
+                    winner_str = f"{gpu_names[winner_idx]} (GPU {winner_idx})"
+                    diff_str = "N/A"
+                else:
+                    winner_str = "N/A"
+                    diff_str = "N/A"
+                line += winner_str.ljust(40) + diff_str.ljust(28)
+                print(line)
+            # Display Tensor Cores results.
+            print("\nMulti-GPU Test Results (Tensor Cores):")
+            header = "Size".ljust(10)
+            for idx in gpu_indices:
+                header += f"GPU {idx} Time".ljust(28)
+            header += "Winner".ljust(40) + "Diff (Fastest vs 2nd)".ljust(28)
+            print(header)
+            for i, size in enumerate(matrix_sizes):
+                line = f"{size:<10}"
+                durations = []
+                for idx in gpu_indices:
+                    result = multi_results_tensor[idx]
+                    if result is not None:
+                        duration = result[i][1]
+                        durations.append((idx, duration))
+                        line += f"{format_duration(duration):<28}"
+                    else:
+                        line += "No Tensor Cores".ljust(28)
+                if len(durations) > 1:
+                    sorted_durations = sorted(durations, key=lambda x: x[1])
+                    winner_idx, winner_time = sorted_durations[0]
+                    runner_up_idx, runner_up_time = sorted_durations[1]
+                    diff = runner_up_time - winner_time
+                    winner_str = f"{gpu_names[winner_idx]} (GPU {winner_idx})"
+                    diff_str = format_duration(diff)
+                elif durations:
+                    winner_idx, _ = durations[0]
+                    winner_str = f"{gpu_names[winner_idx]} (GPU {winner_idx})"
+                    diff_str = "N/A"
+                else:
+                    winner_str = "N/A"
+                    diff_str = "N/A"
+                line += winner_str.ljust(40) + diff_str.ljust(28)
+                print(line)
+    
     print("\nThank you for running the Matrix Multiplication Performance Test!")
-    print("Written by: CHAT-GPT4, on 04/30/2023.")
+    print("Written by: CHAT-GPT o3-mini-high, on 02/14/2025.")
 
 if __name__ == "__main__":
     main()
