@@ -1,3 +1,13 @@
+import os
+# Workaround for Windows OpenMP duplicate runtime error.
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+import torch
+import time
+import platform
+import math
+import numpy as np
+
 """
 Title: Matrix Multiplication Performance Test
 Author: CHAT-GPT o3-mini-high
@@ -19,15 +29,8 @@ The program automatically checks for Tensor Core support (available on NVIDIA GP
 with compute capability 7.0 or higher). If the selected GPU does not support Tensor Cores,
 the program informs the user and skips the Tensor Core test.
 
-The program includes detailed comments explaining each section for clarity.
+Detailed comments are included throughout for clarity.
 """
-
-import torch
-import time
-import os
-import platform
-import math
-import numpy as np
 
 def clear_screen():
     """
